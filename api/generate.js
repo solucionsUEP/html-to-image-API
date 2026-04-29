@@ -42,22 +42,8 @@ function getFont() {
   return _fontData;
 }
 
-let _bgImageBase64;
 function getBgImage() {
-  if (_bgImageBase64 === undefined) {
-    try {
-      const imgBuffer = fs.readFileSync(path.join(process.cwd(), 'public', 'images', 'bg.png'));
-      // Detectar el tipus real: JPEG comença amb ff d8 ff, PNG amb 89 50 4e 47
-      const isJpeg = imgBuffer[0] === 0xFF && imgBuffer[1] === 0xD8;
-      const mime = isJpeg ? 'image/jpeg' : 'image/png';
-      console.log('[bg] Loaded', imgBuffer.length, 'bytes, detected:', mime);
-      _bgImageBase64 = `data:${mime};base64,${imgBuffer.toString('base64')}`;
-    } catch (e) {
-      console.warn("No s'ha trobat la textura de fons:", e.message);
-      _bgImageBase64 = null;
-    }
-  }
-  return _bgImageBase64;
+  return 'https://html-to-image-api-self.vercel.app/images/bg.png';
 }
 
 // ─── HELPERS SCHEMA.ORG ───────────────────────────────────────────────────────
