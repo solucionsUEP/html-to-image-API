@@ -6,6 +6,7 @@
     "node": ">=18.x"
   },
   "dependencies": {
-    "@vercel/og": "^0.6.2"
+    "@vercel/og": "^0.6.2",
+    "express": "^5.2.1"
   }
 }

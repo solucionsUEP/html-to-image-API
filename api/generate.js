@@ -43,7 +43,7 @@ const MAX_EVENTS_PER_ZONE = 6;
 let _fontData;
 function getFont() {
   if (!_fontData) {
-    _fontData = fs.readFileSync(path.resolve('./public/fonts/Inter-Bold.ttf'));
+    _fontData = fs.readFileSync(path.join(process.cwd(), 'public', 'fonts', 'Inter-Bold.ttf'));
   }
   return _fontData;
 }
