@@ -1,4 +1,4 @@
-const { unstable_createNodejsStream } = require('@vercel/og');
+const { ImageResponse } = require('@vercel/og');
 const fs = require('fs');
 const path = require('path');
 
@@ -420,7 +420,7 @@ module.exports = async function handler(req, res) {
   try {
     const element = buildLayout(dateString, zones);
 
-    const stream = await unstable_createNodejsStream(element, {
+    const imageResponse = new ImageResponse(element, {
       width: W,
       height: H,
       fonts: [
@@ -433,10 +433,10 @@ module.exports = async function handler(req, res) {
       ],
     });
 
+    const buffer = await imageResponse.arrayBuffer();
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'no-store');
-    res.status(200);
-    stream.pipe(res);
+    res.status(200).end(Buffer.from(buffer));
   } catch (err) {
     console.error('[generate] error generant imatge:', err);
     res.status(500).json({
