@@ -1,6 +1,8 @@
-const { ImageResponse } = require('@vercel/og');
-const fs = require('fs');
-const path = require('path');
+import { ImageResponse } from '@vercel/og';
+
+export const config = {
+  runtime: 'edge',
+};
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 const CORS_HEADERS = {
@@ -35,19 +37,22 @@ const MAX_EVENTS_PER_ZONE = 8; // Ampliat per cabre més esdeveniments
 
 // ─── FONT & BG (memoïtzats) ───────────────────────────────────────────────────
 let _fontData;
-function getFont() {
+async function getFont() {
   if (!_fontData) {
-    _fontData = fs.readFileSync(path.join(process.cwd(), 'public', 'fonts', 'Inter-Bold.ttf'));
+    const res = await fetch('https://html-to-image-api-self.vercel.app/fonts/Inter-Bold.ttf');
+    _fontData = await res.arrayBuffer();
   }
   return _fontData;
 }
 
 let _bgImageBase64;
-function getBgImage() {
+async function getBgImage() {
   if (_bgImageBase64 === undefined) {
     try {
-      const imgBuffer = fs.readFileSync(path.join(process.cwd(), 'public', 'images', 'bg_optimized.png'));
-      _bgImageBase64 = `data:image/png;base64,${imgBuffer.toString('base64')}`;
+      const res = await fetch('https://html-to-image-api-self.vercel.app/images/bg_optimized.png');
+      const buffer = await res.arrayBuffer();
+      // Converetim a base64 (necessari perquè Edge usa btoa per base64 manual, o simplement usem la URL directa)
+      _bgImageBase64 = 'https://html-to-image-api-self.vercel.app/images/bg_optimized.png';
     } catch (e) {
       console.warn("No s'ha trobat la textura de fons:", e.message);
       _bgImageBase64 = null;
@@ -285,9 +290,8 @@ function legend() {
   };
 }
 
-function buildLayout(dayNum, monthStr, zones) {
+function buildLayout(dayNum, monthStr, zones, bgImg) {
   const zoneNames = Object.keys(zones);
-  const bgImg = getBgImage();
 
   return {
     type: 'div',
@@ -470,55 +474,71 @@ function buildLayout(dayNum, monthStr, zones) {
   };
 }
 
-// ─── HANDLER ──────────────────────────────────────────────────────────────────
-module.exports = async function handler(req, res) {
+// ─── HANDLER EDGE ──────────────────────────────────────────────────────────────────
+export default async function handler(req) {
   if (req.method === 'OPTIONS') {
-    Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
-    res.status(204).end();
-    return;
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
-
-  Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
 
   if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method Not Allowed. Use POST.' });
-    return;
+    return new Response(JSON.stringify({ error: 'Method Not Allowed. Use POST.' }), {
+      status: 405,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    });
   }
 
-  const body = req.body;
+  let body;
+  try {
+    body = await req.json();
+  } catch (e) {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body.' }), {
+      status: 400,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (!body || body['@type'] !== 'ItemList') {
-    res.status(400).json({ error: 'El body ha de ser un schema.org ItemList.' });
-    return;
+    return new Response(JSON.stringify({ error: 'El body ha de ser un schema.org ItemList.' }), {
+      status: 400,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    });
   }
 
   const { dayNum, monthStr, zones } = parseItemList(body);
 
   if (Object.keys(zones).length === 0) {
-    res.status(400).json({ error: 'No s\'han trobat events vàlids.' });
-    return;
+    return new Response(JSON.stringify({ error: 'No s\'han trobat events vàlids.' }), {
+      status: 400,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    });
   }
 
   try {
-    const element = buildLayout(dayNum, monthStr, zones);
-    const imageResponse = new ImageResponse(element, {
+    const fontData = await getFont();
+    const bgImg = await getBgImage();
+    const element = buildLayout(dayNum, monthStr, zones, bgImg);
+    
+    return new ImageResponse(element, {
       width: W,
       height: H,
       fonts: [
         {
           name: 'Inter Bold',
-          data: getFont(),
+          data: fontData,
           weight: 700,
           style: 'normal',
         },
       ],
+      headers: {
+        ...CORS_HEADERS,
+        'Cache-Control': 'no-store',
+      },
     });
-
-    const buffer = await imageResponse.arrayBuffer();
-    res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'no-store');
-    res.status(200).end(Buffer.from(buffer));
   } catch (err) {
-    console.error('[generate] error:', err);
-    res.status(500).json({ error: 'Error intern generant la imatge.' });
+    console.error('[generate] error:', err.message, err.stack);
+    return new Response(JSON.stringify({ error: 'Error intern generant la imatge.' }), {
+      status: 500,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    });
   }
-};
+}
