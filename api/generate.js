@@ -4,7 +4,7 @@ const path = require('path');
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': 'https://www.donambauxa.online',
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Max-Age': '86400',
@@ -12,40 +12,52 @@ const CORS_HEADERS = {
 
 // ─── COLORS ───────────────────────────────────────────────────────────────────
 const CATEGORY_COLORS = {
-  concert:       '#F59E0B', // amber
-  festival:      '#8B5CF6', // violet
-  festa_popular: '#10B981', // emerald
-  default:       '#6B7280', // gray
+  concert: '#2563EB', // blau
+  festival: '#DC2626', // vermell
+  festa_popular: '#16A34A', // verd
+  default: '#6B7280', // gris
 };
 
-// Fallback quan `category` no existeix: deriva del @type de schema.org
 const TYPE_TO_CATEGORY = {
   MusicEvent: 'concert',
-  Event:      'default',
+  Event: 'default',
 };
 
 // ─── PALETA VISUAL ────────────────────────────────────────────────────────────
 const C = {
-  bg:          '#0F172A',
-  cardBg:      '#1E293B',
-  accent:      '#38BDF8',
-  textPrimary: '#F1F5F9',
-  textMuted:   '#94A3B8',
-  textTime:    '#64748B',
-  divider:     '#334155',
+  bg: '#F4F3ED',
+  accent: '#311B5E', // Deep Purple
 };
 
 const W = 1080;
 const H = 1080;
-const MAX_EVENTS_PER_ZONE = 6;
+const MAX_EVENTS_PER_ZONE = 8; // Ampliat per cabre més esdeveniments
 
-// ─── FONT (memoïtzat) ─────────────────────────────────────────────────────────
+// ─── FONT & BG (memoïtzats) ───────────────────────────────────────────────────
 let _fontData;
 function getFont() {
   if (!_fontData) {
     _fontData = fs.readFileSync(path.join(process.cwd(), 'public', 'fonts', 'Inter-Bold.ttf'));
   }
   return _fontData;
+}
+
+let _bgImageBase64;
+function getBgImage() {
+  if (_bgImageBase64 === undefined) {
+    try {
+      const imgBuffer = fs.readFileSync(path.join(process.cwd(), 'public', 'images', 'bg.png'));
+      // Detectar el tipus real: JPEG comença amb ff d8 ff, PNG amb 89 50 4e 47
+      const isJpeg = imgBuffer[0] === 0xFF && imgBuffer[1] === 0xD8;
+      const mime = isJpeg ? 'image/jpeg' : 'image/png';
+      console.log('[bg] Loaded', imgBuffer.length, 'bytes, detected:', mime);
+      _bgImageBase64 = `data:${mime};base64,${imgBuffer.toString('base64')}`;
+    } catch (e) {
+      console.warn("No s'ha trobat la textura de fons:", e.message);
+      _bgImageBase64 = null;
+    }
+  }
+  return _bgImageBase64;
 }
 
 // ─── HELPERS SCHEMA.ORG ───────────────────────────────────────────────────────
@@ -70,7 +82,6 @@ function extractTime(startDate) {
 function parseItemList(body) {
   const elements = body.itemListElement ?? [];
 
-  // Data del header: camp "name" de l'ItemList, o deriva del primer event
   let dateString = body.name ?? null;
   if (!dateString) {
     const first = elements.find((li) => (li.item ?? li).startDate);
@@ -80,8 +91,16 @@ function parseItemList(body) {
         day: 'numeric', month: 'long', year: 'numeric',
       });
     } else {
-      dateString = 'Sense data';
+      dateString = 'SENSE DATA';
     }
+  }
+
+  let dayNum = "??";
+  let monthStr = dateString.toUpperCase();
+  const match = dateString.match(/(\d+)\s*(?:d'|de\s+)?([a-zA-ZçÇ]+)/i);
+  if (match) {
+    dayNum = match[1];
+    monthStr = match[2].toUpperCase();
   }
 
   const zones = {};
@@ -90,18 +109,22 @@ function parseItemList(body) {
     if (!item || !item.name || !item.zone) continue;
     if (isArchived(item)) continue;
 
-    const zone = item.zone;
+    const zone = item.zone.toUpperCase();
     if (!zones[zone]) zones[zone] = [];
     if (zones[zone].length >= MAX_EVENTS_PER_ZONE) continue;
 
     zones[zone].push({
-      nom:   item.name,
-      hora:  extractTime(item.startDate),
+      nom: item.name,
+      hora: extractTime(item.startDate),
       color: resolveCategory(item),
     });
   }
+  // Ordenar cada zona per hora
+  for (const zone of Object.keys(zones)) {
+    zones[zone].sort((a, b) => a.hora.localeCompare(b.hora));
+  }
 
-  return { dateString, zones };
+  return { dayNum, monthStr, zones };
 }
 
 // ─── LAYOUT (objectes Satori sense JSX) ──────────────────────────────────────
@@ -110,12 +133,11 @@ function dot(color) {
     type: 'div',
     props: {
       style: {
-        width: 11,
-        height: 11,
-        borderRadius: 6,
+        width: 14,
+        height: 14,
+        borderRadius: 7,
         backgroundColor: color,
         flexShrink: 0,
-        marginTop: 5,
         marginRight: 10,
       },
       children: ' ',
@@ -130,53 +152,39 @@ function eventRow(ev) {
       style: {
         display: 'flex',
         flexDirection: 'row',
-        alignItems: 'flex-start',
-        paddingTop: 7,
-        paddingBottom: 7,
-        borderBottom: `1px solid ${C.divider}`,
+        alignItems: 'center',
+        marginBottom: 8,
+        width: '100%',
       },
       children: [
         dot(ev.color),
         {
-          type: 'div',
-          props: {
-            style: { display: 'flex', flex: 1 },
-            children: {
-              type: 'span',
-              props: {
-                style: {
-                  fontSize: 20,
-                  color: C.textPrimary,
-                  fontWeight: 700,
-                  lineHeight: 1.35,
-                },
-                children: ev.nom,
-              },
-            },
-          },
-        },
-        {
-          type: 'div',
+          type: 'span',
           props: {
             style: {
               display: 'flex',
-              alignItems: 'center',
-              backgroundColor: C.divider,
-              borderRadius: 6,
-              paddingLeft: 8,
-              paddingRight: 8,
-              paddingTop: 3,
-              paddingBottom: 3,
-              marginLeft: 12,
-              flexShrink: 0,
+              flex: 1,
+              fontSize: 16,
+              color: C.accent,
+              fontWeight: 700,
+              lineHeight: 1.3,
+              textTransform: 'uppercase',
             },
-            children: {
-              type: 'span',
-              props: {
-                style: { fontSize: 17, color: C.textTime, fontWeight: 700 },
-                children: ev.hora,
-              },
+            children: ev.nom,
+          },
+        },
+        {
+          type: 'span',
+          props: {
+            style: {
+              fontSize: 16,
+              color: C.accent,
+              fontWeight: 700,
+              whiteSpace: 'nowrap',
+              marginLeft: 10,
+              textAlign: 'right',
             },
+            children: ev.hora + ' H',
           },
         },
       ],
@@ -191,11 +199,8 @@ function zoneCard(name, events) {
       style: {
         display: 'flex',
         flexDirection: 'column',
-        backgroundColor: C.cardBg,
-        borderRadius: 14,
-        padding: 18,
-        marginBottom: 12,
-        border: `1px solid ${C.divider}`,
+        width: '46%', // dues columnes amples
+        marginBottom: 30,
       },
       children: [
         {
@@ -204,32 +209,26 @@ function zoneCard(name, events) {
             style: {
               display: 'flex',
               flexDirection: 'row',
-              alignItems: 'center',
-              marginBottom: 8,
+              alignItems: 'flex-end',
+              marginBottom: 10,
             },
             children: [
               {
                 type: 'span',
                 props: {
                   style: {
-                    fontSize: 22,
+                    fontSize: 42,
                     fontWeight: 700,
-                    color: C.accent,
-                    letterSpacing: -0.5,
+                    color: '#FFF', // interior blanc per l'efecte outline
+                    letterSpacing: 2,
+                    textShadow: `
+                      -2px -2px 0 ${C.accent},
+                      2px -2px 0 ${C.accent},
+                      -2px 2px 0 ${C.accent},
+                      2px 2px 0 ${C.accent}
+                    `,
                   },
                   children: name,
-                },
-              },
-              {
-                type: 'span',
-                props: {
-                  style: {
-                    fontSize: 13,
-                    color: C.textMuted,
-                    marginLeft: 10,
-                    marginTop: 3,
-                  },
-                  children: `${events.length} event${events.length !== 1 ? 's' : ''}`,
                 },
               },
             ],
@@ -241,8 +240,58 @@ function zoneCard(name, events) {
   };
 }
 
-function buildLayout(dateString, zones) {
+function legend() {
+  return {
+    type: 'div',
+    props: {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        border: `3px solid ${C.accent}`,
+        borderRadius: 12,
+        padding: 12,
+        backgroundColor: 'rgba(255, 255, 255, 0.65)',
+        width: 320,
+      },
+      children: [
+        {
+          type: 'div',
+          props: {
+            style: { display: 'flex', alignItems: 'center', marginBottom: 6 },
+            children: [
+              dot(CATEGORY_COLORS.concert),
+              { type: 'span', props: { style: { fontSize: 14, color: CATEGORY_COLORS.concert, fontWeight: 700, marginLeft: 10 }, children: 'CONCERT' } },
+            ],
+          },
+        },
+        {
+          type: 'div',
+          props: {
+            style: { display: 'flex', alignItems: 'center', marginBottom: 6 },
+            children: [
+              dot(CATEGORY_COLORS.festival),
+              { type: 'span', props: { style: { fontSize: 14, color: CATEGORY_COLORS.festival, fontWeight: 700, marginLeft: 10 }, children: 'FESTIVAL' } },
+            ],
+          },
+        },
+        {
+          type: 'div',
+          props: {
+            style: { display: 'flex', alignItems: 'center' },
+            children: [
+              dot(CATEGORY_COLORS.festa_popular),
+              { type: 'span', props: { style: { fontSize: 14, color: CATEGORY_COLORS.festa_popular, fontWeight: 700, marginLeft: 10 }, children: 'FESTA POPULAR' } },
+            ],
+          },
+        },
+      ],
+    },
+  };
+}
+
+function buildLayout(dayNum, monthStr, zones) {
   const zoneNames = Object.keys(zones);
+  const bgImg = getBgImage();
 
   return {
     type: 'div',
@@ -252,124 +301,172 @@ function buildLayout(dateString, zones) {
         flexDirection: 'column',
         width: W,
         height: H,
-        backgroundColor: C.bg,
-        padding: 38,
         fontFamily: 'Inter Bold',
       },
       children: [
-        // ── HEADER ──────────────────────────────────────────────────────────
-        {
-          type: 'div',
+        ...(bgImg ? [{
+          type: 'img',
           props: {
+            src: bgImg,
+            width: W,
+            height: H,
             style: {
+              position: 'absolute',
+              top: 0,
+              left: 0,
               display: 'flex',
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              backgroundColor: C.cardBg,
-              borderRadius: 18,
-              paddingLeft: 30,
-              paddingRight: 30,
-              paddingTop: 20,
-              paddingBottom: 20,
-              marginBottom: 18,
-              border: `1px solid ${C.divider}`,
-            },
-            children: [
-              {
-                type: 'div',
-                props: {
-                  style: { display: 'flex', flexDirection: 'column' },
-                  children: [
-                    {
-                      type: 'span',
-                      props: {
-                        style: { fontSize: 12, color: C.textMuted, letterSpacing: 2 },
-                        children: 'DONAMBAUXA.ONLINE',
-                      },
-                    },
-                    {
-                      type: 'span',
-                      props: {
-                        style: {
-                          fontSize: 32,
-                          fontWeight: 700,
-                          color: C.textPrimary,
-                          letterSpacing: -0.8,
-                          marginTop: 2,
-                        },
-                        children: 'Agenda Cultural',
-                      },
-                    },
-                  ],
-                },
-              },
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'flex-end',
-                  },
-                  children: [
-                    {
-                      type: 'span',
-                      props: {
-                        style: { fontSize: 12, color: C.textMuted, letterSpacing: 1 },
-                        children: 'DATA',
-                      },
-                    },
-                    {
-                      type: 'span',
-                      props: {
-                        style: {
-                          fontSize: 24,
-                          fontWeight: 700,
-                          color: C.accent,
-                          marginTop: 2,
-                        },
-                        children: dateString,
-                      },
-                    },
-                  ],
-                },
-              },
-            ],
-          },
-        },
-
-        // ── ZONES ────────────────────────────────────────────────────────────
+            }
+          }
+        }] : []),
+        // Contingut Principal
         {
           type: 'div',
           props: {
             style: {
               display: 'flex',
               flexDirection: 'column',
-              flex: 1,
-              overflow: 'hidden',
+              width: '100%',
+              height: '100%',
+              position: 'absolute',
+              top: 0,
+              left: 0,
             },
-            children: zoneNames.map((n) => zoneCard(n, zones[n])),
-          },
-        },
-
-        // ── FOOTER ───────────────────────────────────────────────────────────
-        {
-          type: 'div',
-          props: {
-            style: {
-              display: 'flex',
-              flexDirection: 'row',
-              justifyContent: 'center',
-              marginTop: 12,
-            },
-            children: {
-              type: 'span',
-              props: {
-                style: { fontSize: 13, color: C.textMuted },
-                children: 'donambauxa.online · Esdeveniments musicals de Mallorca',
+            children: [
+              // ── HEADER ──────────────────────────────────────────────────────────
+              {
+                type: 'div',
+                props: {
+                  style: {
+                    display: 'flex',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '100%',
+                    paddingTop: 50,
+                    paddingBottom: 40,
+                  },
+                  children: [
+                    {
+                      type: 'span',
+                      props: {
+                        style: {
+                          fontSize: 90,
+                          color: C.accent,
+                          fontWeight: 700,
+                          letterSpacing: -2,
+                          marginRight: 20,
+                        },
+                        children: 'AGENDA',
+                      },
+                    },
+                    {
+                      type: 'div',
+                      props: {
+                        style: {
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          backgroundColor: 'rgba(255, 255, 255, 0.65)', // Transparència
+                          border: `7px solid ${C.accent}`,
+                          borderRadius: 14,
+                          padding: '5px 20px',
+                          marginRight: 20,
+                        },
+                        children: {
+                          type: 'span',
+                          props: {
+                            style: { fontSize: 75, fontWeight: 700, color: C.accent, lineHeight: 1 },
+                            children: dayNum,
+                          },
+                        },
+                      },
+                    },
+                    {
+                      type: 'span',
+                      props: {
+                        style: {
+                          fontSize: 90,
+                          color: C.accent,
+                          fontWeight: 700,
+                          letterSpacing: -2,
+                        },
+                        children: monthStr,
+                      },
+                    },
+                  ],
+                },
               },
-            },
+
+              // ── ZONES ────────────────────────────────────────────────────────────
+              {
+                type: 'div',
+                props: {
+                  style: {
+                    display: 'flex',
+                    flexDirection: 'row',
+                    flexWrap: 'wrap',
+                    justifyContent: 'space-between',
+                    paddingLeft: 55,
+                    paddingRight: 55,
+                    flex: 1, // ocupa l'espai central
+                  },
+                  children: zoneNames.map((n) => zoneCard(n, zones[n])),
+                },
+              },
+
+              // ── FOOTER ───────────────────────────────────────────────────────────
+              {
+                type: 'div',
+                props: {
+                  style: {
+                    display: 'flex',
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'flex-end',
+                    paddingLeft: 55,
+                    paddingRight: 55,
+                    paddingBottom: 50,
+                  },
+                  children: [
+                    legend(),
+                    {
+                      type: 'div',
+                      props: {
+                        style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end' },
+                        children: [
+                          {
+                            type: 'span',
+                            props: {
+                              style: {
+                                fontSize: 42,
+                                color: C.accent,
+                                fontWeight: 700,
+                                letterSpacing: -1,
+                                fontStyle: 'italic',
+                              },
+                              children: 'Segueix-nos!',
+                            },
+                          },
+                          {
+                            type: 'span',
+                            props: {
+                              style: {
+                                fontSize: 28,
+                                color: C.accent,
+                                fontWeight: 700,
+                                marginTop: 8,
+                              },
+                              children: '@donambauxa.online',
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
           },
         },
       ],
@@ -379,14 +476,12 @@ function buildLayout(dateString, zones) {
 
 // ─── HANDLER ──────────────────────────────────────────────────────────────────
 module.exports = async function handler(req, res) {
-  // Preflight CORS
   if (req.method === 'OPTIONS') {
     Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
     res.status(204).end();
     return;
   }
 
-  // CORS en totes les respostes
   Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
 
   if (req.method !== 'POST') {
@@ -395,31 +490,20 @@ module.exports = async function handler(req, res) {
   }
 
   const body = req.body;
-
   if (!body || body['@type'] !== 'ItemList') {
-    res.status(400).json({
-      error: 'El body ha de ser un schema.org ItemList amb @type: "ItemList".',
-    });
+    res.status(400).json({ error: 'El body ha de ser un schema.org ItemList.' });
     return;
   }
 
-  if (!Array.isArray(body.itemListElement) || body.itemListElement.length === 0) {
-    res.status(400).json({ error: '"itemListElement" ha de ser un array no buit.' });
-    return;
-  }
-
-  const { dateString, zones } = parseItemList(body);
+  const { dayNum, monthStr, zones } = parseItemList(body);
 
   if (Object.keys(zones).length === 0) {
-    res.status(400).json({
-      error: 'No s\'han trobat events vàlids (possiblement tots estan arxivats o sense zona).',
-    });
+    res.status(400).json({ error: 'No s\'han trobat events vàlids.' });
     return;
   }
 
   try {
-    const element = buildLayout(dateString, zones);
-
+    const element = buildLayout(dayNum, monthStr, zones);
     const imageResponse = new ImageResponse(element, {
       width: W,
       height: H,
@@ -438,10 +522,7 @@ module.exports = async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     res.status(200).end(Buffer.from(buffer));
   } catch (err) {
-    console.error('[generate] error generant imatge:', err);
-    res.status(500).json({
-      error: 'Error intern generant la imatge.',
-      detail: process.env.NODE_ENV === 'development' ? err.message : undefined,
-    });
+    console.error('[generate] error:', err);
+    res.status(500).json({ error: 'Error intern generant la imatge.' });
   }
 };

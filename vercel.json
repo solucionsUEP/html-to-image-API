@@ -3,7 +3,7 @@
     "api/generate.js": {
       "memory": 1024,
       "maxDuration": 30,
-      "includeFiles": "public/fonts/**"
+      "includeFiles": "public/**"
     }
   }
 }

@@ -3,3 +3,6 @@ node_modules/
 .env
 .env.local
 *.log
+agenda_*.png
+payload.json
+test.js
