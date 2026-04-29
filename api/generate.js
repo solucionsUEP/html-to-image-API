@@ -46,10 +46,8 @@ let _bgImageBase64;
 function getBgImage() {
   if (_bgImageBase64 === undefined) {
     try {
-      const imgBuffer = fs.readFileSync(path.join(process.cwd(), 'public', 'images', 'bg.png'));
-      const isJpeg = imgBuffer[0] === 0xFF && imgBuffer[1] === 0xD8;
-      const mime = isJpeg ? 'image/jpeg' : 'image/png';
-      _bgImageBase64 = `data:${mime};base64,${imgBuffer.toString('base64')}`;
+      const imgBuffer = fs.readFileSync(path.join(process.cwd(), 'public', 'images', 'bg_optimized.png'));
+      _bgImageBase64 = `data:image/png;base64,${imgBuffer.toString('base64')}`;
     } catch (e) {
       console.warn("No s'ha trobat la textura de fons:", e.message);
       _bgImageBase64 = null;
