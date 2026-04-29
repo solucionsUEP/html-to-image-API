@@ -35,9 +35,10 @@ const MAX_EVENTS_PER_ZONE = 8; // Ampliat per cabre més esdeveniments
 
 // ─── FONT & BG (memoïtzats) ───────────────────────────────────────────────────
 let _fontData;
-function getFont() {
+async function getFont() {
   if (!_fontData) {
-    _fontData = fs.readFileSync(path.join(process.cwd(), 'public', 'fonts', 'Inter-Bold.ttf'));
+    const res = await fetch('https://html-to-image-api-self.vercel.app/fonts/Inter-Bold.ttf');
+    _fontData = await res.arrayBuffer();
   }
   return _fontData;
 }
@@ -489,6 +490,7 @@ module.exports = async function handler(req, res) {
   }
 
   try {
+    const fontData = await getFont();
     const element = buildLayout(dayNum, monthStr, zones);
     const imageResponse = new ImageResponse(element, {
       width: W,
@@ -496,7 +498,7 @@ module.exports = async function handler(req, res) {
       fonts: [
         {
           name: 'Inter Bold',
-          data: getFont(),
+          data: fontData,
           weight: 700,
           style: 'normal',
         },
