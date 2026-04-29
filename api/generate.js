@@ -35,16 +35,27 @@ const MAX_EVENTS_PER_ZONE = 8; // Ampliat per cabre més esdeveniments
 
 // ─── FONT & BG (memoïtzats) ───────────────────────────────────────────────────
 let _fontData;
-async function getFont() {
+function getFont() {
   if (!_fontData) {
-    const res = await fetch('https://html-to-image-api-self.vercel.app/fonts/Inter-Bold.ttf');
-    _fontData = await res.arrayBuffer();
+    _fontData = fs.readFileSync(path.join(process.cwd(), 'public', 'fonts', 'Inter-Bold.ttf'));
   }
   return _fontData;
 }
 
+let _bgImageBase64;
 function getBgImage() {
-  return 'https://html-to-image-api-self.vercel.app/images/bg.png';
+  if (_bgImageBase64 === undefined) {
+    try {
+      const imgBuffer = fs.readFileSync(path.join(process.cwd(), 'public', 'images', 'bg.png'));
+      const isJpeg = imgBuffer[0] === 0xFF && imgBuffer[1] === 0xD8;
+      const mime = isJpeg ? 'image/jpeg' : 'image/png';
+      _bgImageBase64 = `data:${mime};base64,${imgBuffer.toString('base64')}`;
+    } catch (e) {
+      console.warn("No s'ha trobat la textura de fons:", e.message);
+      _bgImageBase64 = null;
+    }
+  }
+  return _bgImageBase64;
 }
 
 // ─── HELPERS SCHEMA.ORG ───────────────────────────────────────────────────────
@@ -490,7 +501,6 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const fontData = await getFont();
     const element = buildLayout(dayNum, monthStr, zones);
     const imageResponse = new ImageResponse(element, {
       width: W,
@@ -498,7 +508,7 @@ module.exports = async function handler(req, res) {
       fonts: [
         {
           name: 'Inter Bold',
-          data: fontData,
+          data: getFont(),
           weight: 700,
           style: 'normal',
         },
