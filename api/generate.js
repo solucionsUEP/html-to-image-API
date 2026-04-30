@@ -14,16 +14,33 @@ const CORS_HEADERS = {
 
 // ─── COLORS ───────────────────────────────────────────────────────────────────
 const CATEGORY_COLORS = {
-  concert: '#2563EB', // blau
-  festival: '#DC2626', // vermell
-  festa_popular: '#16A34A', // verd
-  default: '#6B7280', // gris
+  concert: '#2563EB',
+  festival: '#DC2626',
+  festa_popular: '#16A34A',
+  default: '#6B7280',
+};
+
+const CATEGORY_LABELS = {
+  concert: 'CONCERT',
+  festival: 'FESTIVAL',
+  festa_popular: 'FESTA POPULAR',
+  default: 'ALTRES',
 };
 
 const TYPE_TO_CATEGORY = {
   MusicEvent: 'concert',
   Event: 'default',
 };
+
+// ─── DATES ────────────────────────────────────────────────────────────────────
+const MONTH_FULL = [
+  'GENER','FEBRER','MARÇ','ABRIL','MAIG','JUNY',
+  'JULIOL','AGOST','SETEMBRE','OCTUBRE','NOVEMBRE','DESEMBRE',
+];
+const MONTH_ABBR = [
+  'GEN','FEB','MAR','ABR','MAI','JUN',
+  'JUL','AGO','SET','OCT','NOV','DES',
+];
 
 // ─── PALETA VISUAL ────────────────────────────────────────────────────────────
 const C = {
@@ -49,9 +66,7 @@ let _bgImageBase64;
 async function getBgImage() {
   if (_bgImageBase64 === undefined) {
     try {
-      const res = await fetch('https://html-to-image-api-self.vercel.app/images/bg_optimized.png');
-      const buffer = await res.arrayBuffer();
-      // Converetim a base64 (necessari perquè Edge usa btoa per base64 manual, o simplement usem la URL directa)
+      await fetch('https://html-to-image-api-self.vercel.app/images/bg_optimized.png');
       _bgImageBase64 = 'https://html-to-image-api-self.vercel.app/images/bg_optimized.png';
     } catch (e) {
       console.warn("No s'ha trobat la textura de fons:", e.message);
@@ -67,12 +82,6 @@ function isArchived(item) {
     item.additionalProperty.some((p) => p.name === 'archived' && p.value === true);
 }
 
-function resolveCategory(item) {
-  const raw = item.category?.toLowerCase().replace(/\s+/g, '_')
-    ?? TYPE_TO_CATEGORY[item['@type']]
-    ?? 'default';
-  return CATEGORY_COLORS[raw] ?? CATEGORY_COLORS.default;
-}
 
 function extractTime(startDate) {
   if (!startDate) return '--:--';
@@ -80,31 +89,41 @@ function extractTime(startDate) {
   return m ? m[1] : '--:--';
 }
 
+function parseDateRange(elements) {
+  const dates = elements
+    .map((li) => (li.item ?? li).startDate)
+    .filter(Boolean)
+    .map((s) => new Date(s))
+    .filter((d) => !isNaN(d));
+
+  if (dates.length === 0) return { dayNum: '??', monthStr: 'SENSE DATA', dayNum2: null, monthStr2: null };
+
+  dates.sort((a, b) => a - b);
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+
+  const d1 = first.getDate();
+  const m1 = first.getMonth();
+  const d2 = last.getDate();
+  const m2 = last.getMonth();
+
+  if (d1 === d2 && m1 === m2) {
+    return { dayNum: String(d1), monthStr: MONTH_FULL[m1], dayNum2: null, monthStr2: null };
+  }
+  if (m1 === m2) {
+    return { dayNum: `${d1}-${d2}`, monthStr: MONTH_FULL[m1], dayNum2: null, monthStr2: null };
+  }
+  return { dayNum: String(d1), monthStr: MONTH_ABBR[m1], dayNum2: String(d2), monthStr2: MONTH_ABBR[m2] };
+}
+
 function parseItemList(body) {
   const elements = body.itemListElement ?? [];
 
-  let dateString = body.name ?? null;
-  if (!dateString) {
-    const first = elements.find((li) => (li.item ?? li).startDate);
-    if (first) {
-      const d = new Date((first.item ?? first).startDate);
-      dateString = d.toLocaleDateString('ca-ES', {
-        day: 'numeric', month: 'long', year: 'numeric',
-      });
-    } else {
-      dateString = 'SENSE DATA';
-    }
-  }
-
-  let dayNum = "??";
-  let monthStr = dateString.toUpperCase();
-  const match = dateString.match(/(\d+)\s*(?:d'|de\s+)?([a-zA-ZçÇ]+)/i);
-  if (match) {
-    dayNum = match[1];
-    monthStr = match[2].toUpperCase();
-  }
+  const dateInfo = parseDateRange(elements);
 
   const zones = {};
+  const usedCategories = new Set();
+
   for (const li of elements) {
     const item = li.item ?? li;
     if (!item || !item.name || !item.zone) continue;
@@ -114,18 +133,22 @@ function parseItemList(body) {
     if (!zones[zone]) zones[zone] = [];
     if (zones[zone].length >= MAX_EVENTS_PER_ZONE) continue;
 
+    const raw = item.category?.toLowerCase().replace(/\s+/g, '_') ?? TYPE_TO_CATEGORY[item['@type']] ?? 'default';
+    const catKey = CATEGORY_COLORS[raw] ? raw : 'default';
+    usedCategories.add(catKey);
+
     zones[zone].push({
       nom: item.name,
       hora: extractTime(item.startDate),
-      color: resolveCategory(item),
+      color: CATEGORY_COLORS[catKey],
     });
   }
-  // Ordenar cada zona per hora
+
   for (const zone of Object.keys(zones)) {
     zones[zone].sort((a, b) => a.hora.localeCompare(b.hora));
   }
 
-  return { dayNum, monthStr, zones };
+  return { dateInfo, zones, usedCategories };
 }
 
 // ─── LAYOUT (objectes Satori sense JSX) ──────────────────────────────────────
@@ -241,7 +264,9 @@ function zoneCard(name, events) {
   };
 }
 
-function legend() {
+function legend(usedCategories) {
+  const order = ['concert', 'festival', 'festa_popular', 'default'];
+  const cats = order.filter((k) => usedCategories.has(k));
   return {
     type: 'div',
     props: {
@@ -254,43 +279,47 @@ function legend() {
         backgroundColor: 'rgba(255, 255, 255, 0.65)',
         width: 320,
       },
-      children: [
-        {
-          type: 'div',
-          props: {
-            style: { display: 'flex', alignItems: 'center', marginBottom: 6 },
-            children: [
-              dot(CATEGORY_COLORS.concert),
-              { type: 'span', props: { style: { fontSize: 14, color: CATEGORY_COLORS.concert, fontWeight: 700, marginLeft: 10 }, children: 'CONCERT' } },
-            ],
-          },
+      children: cats.map((k, i) => ({
+        type: 'div',
+        props: {
+          style: { display: 'flex', alignItems: 'center', marginBottom: i < cats.length - 1 ? 6 : 0 },
+          children: [
+            dot(CATEGORY_COLORS[k]),
+            { type: 'span', props: { style: { fontSize: 14, color: CATEGORY_COLORS[k], fontWeight: 700, marginLeft: 10 }, children: CATEGORY_LABELS[k] } },
+          ],
         },
-        {
-          type: 'div',
-          props: {
-            style: { display: 'flex', alignItems: 'center', marginBottom: 6 },
-            children: [
-              dot(CATEGORY_COLORS.festival),
-              { type: 'span', props: { style: { fontSize: 14, color: CATEGORY_COLORS.festival, fontWeight: 700, marginLeft: 10 }, children: 'FESTIVAL' } },
-            ],
-          },
-        },
-        {
-          type: 'div',
-          props: {
-            style: { display: 'flex', alignItems: 'center' },
-            children: [
-              dot(CATEGORY_COLORS.festa_popular),
-              { type: 'span', props: { style: { fontSize: 14, color: CATEGORY_COLORS.festa_popular, fontWeight: 700, marginLeft: 10 }, children: 'FESTA POPULAR' } },
-            ],
-          },
-        },
-      ],
+      })),
     },
   };
 }
 
-function buildLayout(dayNum, monthStr, zones, bgImg) {
+function dateBox(dayNum) {
+  return {
+    type: 'div',
+    props: {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255, 255, 255, 0.65)',
+        border: `7px solid ${C.accent}`,
+        borderRadius: 14,
+        padding: '5px 20px',
+        marginRight: 20,
+      },
+      children: {
+        type: 'span',
+        props: {
+          style: { fontSize: 75, fontWeight: 700, color: C.accent, lineHeight: 1 },
+          children: dayNum,
+        },
+      },
+    },
+  };
+}
+
+function buildLayout({ dayNum, monthStr, dayNum2, monthStr2 }, zones, bgImg, usedCategories) {
   const zoneNames = Object.keys(zones);
 
   return {
@@ -359,29 +388,7 @@ function buildLayout(dayNum, monthStr, zones, bgImg) {
                         children: 'AGENDA',
                       },
                     },
-                    {
-                      type: 'div',
-                      props: {
-                        style: {
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          backgroundColor: 'rgba(255, 255, 255, 0.65)', // Transparència
-                          border: `7px solid ${C.accent}`,
-                          borderRadius: 14,
-                          padding: '5px 20px',
-                          marginRight: 20,
-                        },
-                        children: {
-                          type: 'span',
-                          props: {
-                            style: { fontSize: 75, fontWeight: 700, color: C.accent, lineHeight: 1 },
-                            children: dayNum,
-                          },
-                        },
-                      },
-                    },
+                    dateBox(dayNum),
                     {
                       type: 'span',
                       props: {
@@ -390,10 +397,28 @@ function buildLayout(dayNum, monthStr, zones, bgImg) {
                           color: C.accent,
                           fontWeight: 700,
                           letterSpacing: -2,
+                          marginRight: dayNum2 ? 20 : 0,
                         },
                         children: monthStr,
                       },
                     },
+                    ...(dayNum2 ? [
+                      {
+                        type: 'span',
+                        props: {
+                          style: { fontSize: 90, color: C.accent, fontWeight: 700, marginRight: 20 },
+                          children: '—',
+                        },
+                      },
+                      dateBox(dayNum2),
+                      {
+                        type: 'span',
+                        props: {
+                          style: { fontSize: 90, color: C.accent, fontWeight: 700, letterSpacing: -2 },
+                          children: monthStr2,
+                        },
+                      },
+                    ] : []),
                   ],
                 },
               },
@@ -429,7 +454,7 @@ function buildLayout(dayNum, monthStr, zones, bgImg) {
                     paddingBottom: 50,
                   },
                   children: [
-                    legend(),
+                    legend(usedCategories),
                     {
                       type: 'div',
                       props: {
@@ -504,7 +529,7 @@ export default async function handler(req) {
     });
   }
 
-  const { dayNum, monthStr, zones } = parseItemList(body);
+  const { dateInfo, zones, usedCategories } = parseItemList(body);
 
   if (Object.keys(zones).length === 0) {
     return new Response(JSON.stringify({ error: 'No s\'han trobat events vàlids.' }), {
@@ -516,7 +541,7 @@ export default async function handler(req) {
   try {
     const fontData = await getFont();
     const bgImg = await getBgImage();
-    const element = buildLayout(dayNum, monthStr, zones, bgImg);
+    const element = buildLayout(dateInfo, zones, bgImg, usedCategories);
     
     return new ImageResponse(element, {
       width: W,
