@@ -50,7 +50,17 @@ const C = {
 
 const W = 1080;
 const H = 1080;
-const MAX_EVENTS_PER_ZONE = 8; // Ampliat per cabre més esdeveniments
+
+// ─── RESTRICCIONS DE LAYOUT ───────────────────────────────────────────────────
+const MAX_ZONES = 6;          // 2 columnes × 3 files màxim
+const MAX_NAME_LEN = 38;      // caràcters màxims per nom d'event
+
+// Events per zona decreixents segons quantes zones hi ha
+function maxEventsForZoneCount(n) {
+  if (n <= 2) return 6;
+  if (n <= 4) return 5;
+  return 4;
+}
 
 // ─── FONT & BG (memoïtzats) ───────────────────────────────────────────────────
 let _fontData;
@@ -116,6 +126,11 @@ function parseDateRange(elements) {
   return { dayNum: String(d1), monthStr: MONTH_ABBR[m1], dayNum2: String(d2), monthStr2: MONTH_ABBR[m2] };
 }
 
+function truncateName(name) {
+  if (name.length <= MAX_NAME_LEN) return name;
+  return name.slice(0, MAX_NAME_LEN - 1) + '…';
+}
+
 function parseItemList(body) {
   const elements = body.itemListElement ?? [];
 
@@ -131,14 +146,14 @@ function parseItemList(body) {
 
     const zone = item.zone.toUpperCase();
     if (!zones[zone]) zones[zone] = [];
-    if (zones[zone].length >= MAX_EVENTS_PER_ZONE) continue;
+    if (zones[zone].length >= 6) continue; // màxim generós durant la col·lecció
 
     const raw = item.category?.toLowerCase().replace(/\s+/g, '_') ?? TYPE_TO_CATEGORY[item['@type']] ?? 'default';
     const catKey = CATEGORY_COLORS[raw] ? raw : 'default';
     usedCategories.add(catKey);
 
     zones[zone].push({
-      nom: item.name,
+      nom: truncateName(item.name),
       hora: extractTime(item.startDate),
       color: CATEGORY_COLORS[catKey],
     });
@@ -149,6 +164,22 @@ function parseItemList(body) {
   }
 
   return { dateInfo, zones, usedCategories };
+}
+
+// Divideix les zones en grups de MAX_ZONES i aplica el límit d'events per grup
+function chunkZones(zones) {
+  const entries = Object.entries(zones);
+  const chunks = [];
+  for (let i = 0; i < entries.length; i += MAX_ZONES) {
+    const slice = entries.slice(i, i + MAX_ZONES);
+    const maxEv = maxEventsForZoneCount(slice.length);
+    const chunk = {};
+    for (const [name, events] of slice) {
+      chunk[name] = events.length > maxEv ? events.slice(0, maxEv) : events;
+    }
+    chunks.push(chunk);
+  }
+  return chunks;
 }
 
 // ─── LAYOUT (objectes Satori sense JSX) ──────────────────────────────────────
@@ -432,9 +463,12 @@ function buildLayout({ dayNum, monthStr, dayNum2, monthStr2 }, zones, bgImg, use
                     flexDirection: 'row',
                     flexWrap: 'wrap',
                     justifyContent: 'space-between',
+                    alignContent: 'flex-start', // no estira les files verticalment
                     paddingLeft: 55,
                     paddingRight: 55,
-                    flex: 1, // ocupa l'espai central
+                    flex: 1,
+                    minHeight: 0,      // permet que flex shrink funcioni
+                    overflow: 'hidden', // talla qualsevol desbordament
                   },
                   children: zoneNames.map((n) => zoneCard(n, zones[n])),
                 },
@@ -541,23 +575,23 @@ export default async function handler(req) {
   try {
     const fontData = await getFont();
     const bgImg = await getBgImage();
-    const element = buildLayout(dateInfo, zones, bgImg, usedCategories);
-    
-    return new ImageResponse(element, {
-      width: W,
-      height: H,
-      fonts: [
-        {
-          name: 'Inter Bold',
-          data: fontData,
-          weight: 700,
-          style: 'normal',
-        },
-      ],
-      headers: {
-        ...CORS_HEADERS,
-        'Cache-Control': 'no-store',
-      },
+    const fontConfig = [{ name: 'Inter Bold', data: fontData, weight: 700, style: 'normal' }];
+
+    const chunks = chunkZones(zones);
+    const images = [];
+
+    for (const chunk of chunks) {
+      const element = buildLayout(dateInfo, chunk, bgImg, usedCategories);
+      const imgResp = new ImageResponse(element, { width: W, height: H, fonts: fontConfig });
+      const buffer = await imgResp.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      images.push('data:image/png;base64,' + btoa(binary));
+    }
+
+    return new Response(JSON.stringify({ count: images.length, images }), {
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     });
   } catch (err) {
     console.error('[generate] error:', err.message, err.stack);
